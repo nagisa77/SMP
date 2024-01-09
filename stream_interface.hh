@@ -1,6 +1,7 @@
 
 #ifndef STREAM_INTERFACE
 #define STREAM_INTERFACE
+#include <memory>
 #include <set>
 #include <string>
 
@@ -11,10 +12,10 @@ public:
 
 template <typename T> class StreamPusher {
 public:
-  void RegisterPuller(StreamPuller<T>* puller) {
+  void RegisterPuller(std::shared_ptr<StreamPuller<T>> puller) {
     pullers_.insert(puller);
   }
-  void UnregisterPuller(StreamPuller<T>* puller) {
+  void UnregisterPuller(std::shared_ptr<StreamPuller<T>> puller) {
     pullers_.erase(puller);
   }
   void NotifyPuller(const T& data) {
@@ -22,7 +23,7 @@ public:
       puller->OnData(data);
     }
   }
-  std::set<StreamPuller<T>*> pullers_;
+  std::set<std::shared_ptr<StreamPuller<T>>> pullers_;
 };
 
 #endif

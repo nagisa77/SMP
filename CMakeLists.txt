@@ -26,3 +26,24 @@ target_link_libraries(SMP
   ${AVUTIL_LIBRARY}
   ${SWSCALE_LIBRARY}
 )
+
+# 添加测试可执行文件
+add_executable(TestClientPull test/test_client_pull.cc)
+target_link_libraries(TestClientPull
+  spdlog::spdlog
+  ${AVFORMAT_LIBRARY}
+  ${AVCODEC_LIBRARY}
+  ${AVUTIL_LIBRARY}
+  ${SWSCALE_LIBRARY}
+)
+target_include_directories(TestClientPull PRIVATE ${CMAKE_SOURCE_DIR}/include)
+
+add_executable(TestClientPush test/test_client_push.cc)
+target_link_libraries(TestClientPush
+  spdlog::spdlog
+  ${AVFORMAT_LIBRARY}
+  ${AVCODEC_LIBRARY}
+  ${AVUTIL_LIBRARY}
+  ${SWSCALE_LIBRARY}
+)
+target_include_directories(TestClientPush PRIVATE ${CMAKE_SOURCE_DIR}/include)

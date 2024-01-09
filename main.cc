@@ -8,7 +8,7 @@ int main() {
     short stream_port = 1234;
     short http_port = 2345;
 
-    StreamingServer server(io_context, stream_port);
+    StreamingServer server(io_context, stream_port, http_port);
     io_context.run();
   } catch (const std::exception& e) {
     spdlog::error("Exception: {}", e.what());
