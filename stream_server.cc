@@ -7,6 +7,9 @@
 
 using JSON = nlohmann::json;
 
+using WriteJSONComplete = std::function<void(const boost::system::error_code&, std::size_t)>;
+using ReadJSONComplete = std::function<void(const JSON& json, const boost::system::error_code&, std::size_t)>;
+
 static void send_json(tcp::socket& socket, const JSON& json) {
   std::string json_str = json.dump();
   size_t json_length = json_str.size();
@@ -24,40 +27,80 @@ static void receive_json(tcp::socket& socket, JSON& json) {
   json = JSON::parse(json_str.begin(), json_str.end());
 }
 
-StreamSession::StreamSession(boost::asio::io_context& io_context)
-    : socket_(io_context) {
-  // 构造函数实现
+static void send_json_async(std::shared_ptr<tcp::socket> socket, const JSON& json, WriteJSONComplete callback) {
+  auto json_str = std::make_shared<std::string>(json.dump());
+  auto json_length = std::make_shared<std::uint32_t>(json_str->size());
+
+  std::vector<boost::asio::const_buffer> buffers;
+  buffers.push_back(boost::asio::buffer(json_length.get(), sizeof(*json_length)));
+  buffers.push_back(boost::asio::buffer(*json_str));
+
+  boost::asio::async_write(*socket, buffers,
+    [json_str, json_length, callback](const boost::system::error_code& ec, std::size_t bytes_transferred) {
+      if (callback) {
+        callback(ec, bytes_transferred);
+      }
+    });
 }
 
-tcp::socket& StreamSession::socket() { return socket_; }
+static void receive_json_async(std::shared_ptr<tcp::socket> socket, ReadJSONComplete callback) {
+  auto json_length = std::make_shared<std::size_t>(0);
 
-StreamPullSession::StreamPullSession(boost::asio::io_context& io_context)
-    : StreamSession(io_context) {}
+  boost::asio::async_read(*socket, boost::asio::buffer(json_length.get(), sizeof(*json_length)),
+    [json_length, socket, callback](const boost::system::error_code& ec, std::size_t /*bytes_transferred*/) {
+      if (!ec) {
+        auto json_str = std::make_shared<std::vector<char>>(*json_length);
+        boost::asio::async_read(*socket, boost::asio::buffer(json_str->data(), json_str->size()),
+          [json_str, callback](const boost::system::error_code& ec, std::size_t bytes_transferred) {
+            if (!ec) {
+              JSON json = JSON::parse(json_str->begin(), json_str->end());
+              if (callback) {
+                callback(json, ec, bytes_transferred);
+              }
+            } else {
+              if (callback) {
+                JSON json;
+                callback(json, ec, bytes_transferred);
+              }
+            }
+          });
+      } else {
+        if (callback) {
+          JSON json;
+          callback(json, ec, 0);
+        }
+      }
+    });
+}
+
+StreamSession::StreamSession(std::shared_ptr<tcp::socket> socket)
+: socket_(socket) {
+}
+
+StreamPushSession::~StreamPushSession() {}
+
+StreamPullSession::~StreamPullSession() {}
+
+std::shared_ptr<tcp::socket> StreamSession::socket() { return socket_; }
+
+StreamPullSession::StreamPullSession(std::shared_ptr<tcp::socket> socket)
+    : StreamSession(socket) {}
 
 void StreamPullSession::OnData(const int& data) {}
 
 void StreamPullSession::Start() {}
 
-StreamPushSession::StreamPushSession(boost::asio::io_context& io_context)
-    : StreamSession(io_context) {}
+StreamPushSession::StreamPushSession(std::shared_ptr<tcp::socket> socket)
+    : StreamSession(socket) {}
 
-void StreamPushSession::Start() { DoRead(); }
-
-void StreamPushSession::DoRead() {
-  auto self(shared_from_this());
-  socket_.async_read_some(
-      boost::asio::buffer(&data_, sizeof(data_)),
-      [this, self](boost::system::error_code ec, std::size_t length) {
-        if (!ec) {
-          spdlog::info("read: {}", data_);
-          // 继续读取更多数据
-          DoRead();
-        } else {
-          // 处理错误或连接关闭
-          spdlog::error("Read error: {}", ec.message());
-          // 可以在这里关闭套接字或清理资源
-        }
-      });
+void StreamPushSession::Start() { 
+  receive_json_async(socket_, [](const JSON& json, const boost::system::error_code& ec, std::size_t) {
+    if (ec) { // Check if there is an error
+      spdlog::error("Error: {} - {}", ec.value(), ec.message()); // Log the error information
+    } else {
+      spdlog::info("read json: \n{}", json.dump(2));
+    }
+  });
 }
 
 StreamingServer::StreamingServer(boost::asio::io_context& io_context,
@@ -70,14 +113,45 @@ StreamingServer::StreamingServer(boost::asio::io_context& io_context,
 StreamingServer::~StreamingServer() {}
 
 void StreamingServer::HandleNewConnection(std::shared_ptr<tcp::socket> socket) {
+  receive_json_async(socket, [](const JSON& json, const boost::system::error_code& ec, std::size_t) {
+    if (ec) { // Check if there is an error
+      spdlog::error("Error: {} - {}", ec.value(), ec.message()); // Log the error information
+    } else {
+      // spdlog::debug("read json: \n{}", json.dump(2));
+      bool is_push = json["is_push"];
+      std::string stream_id = json["stream_id"];
+      spdlog::info("read json, is_push: {}, stream_id: {}", is_push, stream_id); 
+      
+      if (is_push) {
+        std::shared_ptr<StreamPushSession> push_session = std::make_shared<StreamPushSession>(socket);
+        push_session->Start();
+        if (push_sessions_.find(stream_id) != push_sessions_.end()) {
+          spdlog::error("push stream id: {} is exists.", stream_id);
+        }
+        push_sessions_[stream_id] = push_session;
+      } else {
+        std::shared_ptr<StreamPullSession> pull_session = std::make_shared<StreamPullSession>(socket);
+        pull_session->Start();
+        
+        if (push_sessions_.find(stream_id) == push_sessions_.end()) {
+          spdlog::error("push stream id: {} is not exists.", stream_id);
+          
+          // 没推流就先拉流
+          return;
+        }
+        push_sessions_[stream_id]->RegisterPuller(pull_session); 
+      }
+    }
+  });
+//  
+//  std::shared_ptr<StreamPushSession> push_session = std::make_shared<StreamPushSession>(socket);
+//  push_session->Start();
+//  push_sessions_["stream_id_01"] = push_session;
 }
 
 void StreamingServer::StartAccept() {
-
   // 创建一个新的 socket
-  std::shared_ptr<tcp::socket> socket(
-      new tcp::socket(acceptor_.get_executor().context()));
-
+  std::shared_ptr<tcp::socket> socket = std::make_shared<tcp::socket>(acceptor_.get_executor());
   // 异步等待新的连接
   acceptor_.async_accept(
       *socket, [this, socket](const boost::system::error_code& error) {
@@ -141,38 +215,38 @@ void StreamingServer::StopStreamingSession(const std::string& stream_id) {
   // ...
 }
 
-void StreamingServer::StartAccept(const std::string& stream_id, bool is_push) {
-  if (is_push) {
-    std::shared_ptr<StreamPushSession> push_session =
-        std::make_shared<StreamPushSession>(io_context_);
-
-    if (push_sessions_.find(stream_id) != push_sessions_.end()) {
-      spdlog::error("push sessions stream_id exists: {}", stream_id);
-    }
-
-    push_sessions_[stream_id] = push_session;
-
-    acceptor_.async_accept(
-        push_session->socket(),
-        [this, push_session](const boost::system::error_code& error) {
-          HandleAcceptPush(push_session, error);
-        });
-  } else {
-    std::shared_ptr<StreamPullSession> pull_session =
-        std::make_shared<StreamPullSession>(io_context_);
-    if (push_sessions_.find(stream_id) == push_sessions_.end()) {
-      spdlog::error("push sessions stream_id not exists: {}", stream_id);
-      return;
-    }
-    push_sessions_[stream_id]->RegisterPuller(pull_session);
-
-    acceptor_.async_accept(
-        pull_session->socket(),
-        [this, pull_session](const boost::system::error_code& error) {
-          HandleAcceptPull(pull_session, error);
-        });
-  }
-}
+//void StreamingServer::StartAccept(const std::string& stream_id, bool is_push) {
+//  if (is_push) {
+//    std::shared_ptr<StreamPushSession> push_session =
+//        std::make_shared<StreamPushSession>(io_context_);
+//
+//    if (push_sessions_.find(stream_id) != push_sessions_.end()) {
+//      spdlog::error("push sessions stream_id exists: {}", stream_id);
+//    }
+//
+//    push_sessions_[stream_id] = push_session;
+//
+//    acceptor_.async_accept(
+//        push_session->socket(),
+//        [this, push_session](const boost::system::error_code& error) {
+//          HandleAcceptPush(push_session, error);
+//        });
+//  } else {
+//    std::shared_ptr<StreamPullSession> pull_session =
+//        std::make_shared<StreamPullSession>(io_context_);
+//    if (push_sessions_.find(stream_id) == push_sessions_.end()) {
+//      spdlog::error("push sessions stream_id not exists: {}", stream_id);
+//      return;
+//    }
+//    push_sessions_[stream_id]->RegisterPuller(pull_session);
+//
+//    acceptor_.async_accept(
+//        pull_session->socket(),
+//        [this, pull_session](const boost::system::error_code& error) {
+//          HandleAcceptPull(pull_session, error);
+//        });
+//  }
+//}
 
 void StreamingServer::HandleAcceptPush(
     std::shared_ptr<StreamPushSession> session,

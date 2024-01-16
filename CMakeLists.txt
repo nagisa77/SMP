@@ -5,6 +5,7 @@ set(CMAKE_CXX_STANDARD 14)
 
 find_package(spdlog REQUIRED)
 find_package(nlohmann_json REQUIRED)
+find_package(Boost REQUIRED COMPONENTS system thread)
 
 find_path(FFMPEG_INCLUDE_DIR libavformat/avformat.h)
 find_library(AVFORMAT_LIBRARY avformat)
@@ -22,6 +23,8 @@ add_executable(SMP
 
 target_link_libraries(SMP
   spdlog::spdlog
+  Boost::system
+  Boost::thread
   nlohmann_json::nlohmann_json
   ${AVFORMAT_LIBRARY}
   ${AVCODEC_LIBRARY}
@@ -33,6 +36,8 @@ target_link_libraries(SMP
 add_executable(TestClientPull test/test_client_pull.cc)
 target_link_libraries(TestClientPull
   spdlog::spdlog
+  Boost::system
+  Boost::thread
   nlohmann_json::nlohmann_json
   ${AVFORMAT_LIBRARY}
   ${AVCODEC_LIBRARY}
@@ -44,6 +49,8 @@ target_include_directories(TestClientPull PRIVATE ${CMAKE_SOURCE_DIR}/include)
 add_executable(TestClientPush test/test_client_push.cc)
 target_link_libraries(TestClientPush
   spdlog::spdlog
+  Boost::system
+  Boost::thread
   nlohmann_json::nlohmann_json
   ${AVFORMAT_LIBRARY}
   ${AVCODEC_LIBRARY}

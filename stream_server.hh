@@ -11,20 +11,20 @@ using boost::asio::ip::tcp;
 
 class StreamSession : public std::enable_shared_from_this<StreamSession> {
 public:
-  explicit StreamSession(boost::asio::io_context& io_context);
-  tcp::socket& socket();
+  explicit StreamSession(std::shared_ptr<tcp::socket> socket);
+  std::shared_ptr<tcp::socket> socket();
   virtual void Start() = 0;
 
 protected:
-  tcp::socket socket_;
-  // 其他成员变量和方法
+  std::shared_ptr<tcp::socket> socket_;
 };
 
 class StreamPushSession : public StreamSession, public StreamPusher<int> {
 public:
-  explicit StreamPushSession(boost::asio::io_context& io_context);
+  explicit StreamPushSession(std::shared_ptr<tcp::socket> socket);
+  virtual ~StreamPushSession();
+
   void Start() override;
-  void DoRead();
 
 private:
   int data_ = 0;
@@ -32,7 +32,8 @@ private:
 
 class StreamPullSession : public StreamSession, public StreamPuller<int> {
 public:
-  explicit StreamPullSession(boost::asio::io_context& io_context);
+  explicit StreamPullSession(std::shared_ptr<tcp::socket> socket);
+  virtual ~StreamPullSession();
   void OnData(const int& data) override;
   void Start() override;
 };
