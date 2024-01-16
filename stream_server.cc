@@ -3,6 +3,26 @@
 #include "stream_interface.hh"
 #include <iostream>
 #include <spdlog/spdlog.h>
+#include <nlohmann/json.hpp>
+
+using JSON = nlohmann::json;
+
+static void send_json(tcp::socket& socket, const JSON& json) {
+  std::string json_str = json.dump();
+  size_t json_length = json_str.size();
+  std::vector<boost::asio::const_buffer> buffers;
+  buffers.push_back(boost::asio::buffer(&json_length, sizeof(json_length)));
+  buffers.push_back(boost::asio::buffer(json_str));
+  boost::asio::write(socket, buffers);
+}
+
+static void receive_json(tcp::socket& socket, JSON& json) {
+  std::uint32_t json_length;
+  boost::asio::read(socket, boost::asio::buffer(&json_length, sizeof(json_length)));
+  std::vector<char> json_str(json_length);
+  boost::asio::read(socket, boost::asio::buffer(json_str.data(), json_length));
+  json = JSON::parse(json_str.begin(), json_str.end());
+}
 
 StreamSession::StreamSession(boost::asio::io_context& io_context)
     : socket_(io_context) {
