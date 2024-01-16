@@ -29,19 +29,20 @@ public StreamSession,
 public StreamPusher<std::shared_ptr<AVPacket>> {
 public:
   explicit StreamPushSession(std::shared_ptr<tcp::socket> socket, const std::string& stream_id);
-  virtual ~StreamPushSession();
 
   void Start() override;
 
 private:
   void ReadMessage();
   int data_ = 0;
+  std::string stream_id_;
 };
 
-class StreamPullSession : public StreamSession, public StreamPuller<std::shared_ptr<AVPacket>> {
+class StreamPullSession : 
+public StreamSession,
+public StreamPuller<std::shared_ptr<AVPacket>> {
 public:
-  explicit StreamPullSession(std::shared_ptr<tcp::socket> socket, const std::string& puller_id);
-  virtual ~StreamPullSession();
+  explicit StreamPullSession(std::shared_ptr<tcp::socket> socket);
   void OnData(const std::shared_ptr<AVPacket>& data) override;
   void Start() override;
 };

@@ -10,20 +10,9 @@ public:
   virtual void OnPushStreamComplete(const std::string& stream_id) = 0;
 };
 
-class StreamPullListener {
-public:
-  virtual void OnPullStreamComplete(const std::string& puller_id) = 0;
-};
-
 template <typename T> class StreamPuller {
 public:
   virtual void OnData(const T& data) = 0;
-  
-  void RegisterStreamPullLister(StreamPullListener* listener) {
-    listener_ = listener;
-  }
-
-  StreamPullListener* listener_ = nullptr;
 };
 
 template <typename T> class StreamPusher {
