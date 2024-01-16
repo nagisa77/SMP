@@ -31,10 +31,12 @@ int main() {
         tcp::endpoint(boost::asio::ip::address::from_string("127.0.0.1"),
                       1234)); // 替换为您的 TCP 端口
 
-    // 发送数字
-    int num = 42; // 示例数字
-    spdlog::info("Sending number: {}", num);
-    boost::asio::write(socket, boost::asio::buffer(&num, sizeof(num)));
+    for (int i = 0; i < 10000; ++i) {
+      // 发送数字
+      int num = i; // 示例数字
+      spdlog::info("Sending number: {}", num);
+      boost::asio::write(socket, boost::asio::buffer(&num, sizeof(num)));
+    }
   } catch (std::exception& e) {
     spdlog::error("Exception: {}", e.what());
     return 1;

@@ -39,12 +39,13 @@ public:
 
 class StreamingServer {
 public:
-  StreamingServer(boost::asio::io_context& io_context, short stream_port,
-                  short http_port);
-  void StartAccept(const std::string& stream_id, bool is_push);
-  void SetupRoutes();
+  StreamingServer(boost::asio::io_context& io_context, short stream_port);
+  ~StreamingServer();
+  void StartAccept();
 
 private:
+  void HandleNewConnection(std::shared_ptr<tcp::socket> socket);
+
   void HandleAcceptPush(std::shared_ptr<StreamPushSession> session,
                         const boost::system::error_code& error);
   void HandleAcceptPull(std::shared_ptr<StreamPullSession> session,
@@ -54,7 +55,6 @@ private:
 
   boost::asio::io_context& io_context_;
   tcp::acceptor acceptor_;
-  httplib::Server http_server_;
   std::map<std::string, std::shared_ptr<StreamPushSession>> push_sessions_;
 };
 

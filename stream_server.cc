@@ -41,50 +41,73 @@ void StreamPushSession::DoRead() {
 }
 
 StreamingServer::StreamingServer(boost::asio::io_context& io_context,
-                                 short stream_port, short http_port)
+                                 short stream_port)
     : io_context_(io_context),
       acceptor_(io_context, tcp::endpoint(tcp::v4(), stream_port)) {
-  SetupRoutes();
-  // 运行 HTTP 服务器在单独的线程
-  std::thread([this, http_port]() {
-    bool listen_ret = http_server_.listen("127.0.0.1", http_port);
-    spdlog::info("HTTP server listening on localhost:{}, ret:{}", http_port,
-                 listen_ret);
-  }).detach();
+  StartAccept();
 }
 
-void StreamingServer::SetupRoutes() {
-  // 处理推流信令
-  http_server_.Post(
-      "/push", [&](const httplib::Request& req, httplib::Response& res) {
-        // 解析请求
-        auto stream_id = req.get_param_value("stream_id");
-        auto enable = req.get_param_value("enable");
+StreamingServer::~StreamingServer() {}
 
-        spdlog::info("push, stream_id: {}, enable: {}", stream_id, enable);
-        // 根据请求处理推流逻辑
-        // ...
+void StreamingServer::HandleNewConnection(std::shared_ptr<tcp::socket> socket) {
+}
 
-        res.set_content("Push signal processed", "text/plain");
+void StreamingServer::StartAccept() {
 
-        StartAccept(stream_id, true); // true 表示这是一个推流会话
+  // 创建一个新的 socket
+  std::shared_ptr<tcp::socket> socket(
+      new tcp::socket(acceptor_.get_executor().context()));
+
+  // 异步等待新的连接
+  acceptor_.async_accept(
+      *socket, [this, socket](const boost::system::error_code& error) {
+        if (!error) {
+          // 成功接受新的连接
+          HandleNewConnection(socket);
+
+          // 再次开始等待接受下一个连接
+          StartAccept();
+        } else {
+          // 处理错误
+        }
       });
 
-  // 处理拉流信令
-  http_server_.Post(
-      "/pull", [&](const httplib::Request& req, httplib::Response& res) {
-        // 解析请求
-        auto stream_id = req.get_param_value("stream_id");
-        auto enable = req.get_param_value("enable");
-
-        spdlog::info("push, stream_id: {}, enable: {}", stream_id, enable);
-        // 根据请求处理拉流逻辑
-        // ...
-
-        res.set_content("Pull signal processed", "text/plain");
-
-        StartAccept(stream_id, false); // false 表示这是一个拉流会话
-      });
+  //  acceptor_.async_accept(
+  //      push_session->socket(),
+  //      [this, push_session](const boost::system::error_code& error) {
+  //        HandleAcceptPush(push_session, error);
+  //      });
+  //  // 处理推流信令
+  //  http_server_.Post(
+  //      "/push", [&](const httplib::Request& req, httplib::Response& res) {
+  //        // 解析请求
+  //        auto stream_id = req.get_param_value("stream_id");
+  //        auto enable = req.get_param_value("enable");
+  //
+  //        spdlog::info("push, stream_id: {}, enable: {}", stream_id, enable);
+  //        // 根据请求处理推流逻辑
+  //        // ...
+  //
+  //        res.set_content("Push signal processed", "text/plain");
+  //
+  //        StartAccept(stream_id, true); // true 表示这是一个推流会话
+  //      });
+  //
+  //  // 处理拉流信令
+  //  http_server_.Post(
+  //      "/pull", [&](const httplib::Request& req, httplib::Response& res) {
+  //        // 解析请求
+  //        auto stream_id = req.get_param_value("stream_id");
+  //        auto enable = req.get_param_value("enable");
+  //
+  //        spdlog::info("push, stream_id: {}, enable: {}", stream_id, enable);
+  //        // 根据请求处理拉流逻辑
+  //        // ...
+  //
+  //        res.set_content("Pull signal processed", "text/plain");
+  //
+  //        StartAccept(stream_id, false); // false 表示这是一个拉流会话
+  //      });
 }
 
 void StreamingServer::StartStreamingSession(const std::string& stream_id,
