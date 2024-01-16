@@ -19,7 +19,7 @@ int main() {
   try {
     spdlog::info("Starting Streaming Server");
     boost::asio::io_context io_context;
-    short stream_port = 1234;
+    short stream_port = 10086;
 
     // 创建并启动循环定时器
     auto timer =

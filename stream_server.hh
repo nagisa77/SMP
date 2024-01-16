@@ -7,11 +7,16 @@
 #include <boost/asio.hpp>
 #include <memory>
 
+extern "C" {
+#include <libavcodec/avcodec.h>
+}
+
 using boost::asio::ip::tcp;
 
 class StreamSession : public std::enable_shared_from_this<StreamSession> {
 public:
   explicit StreamSession(std::shared_ptr<tcp::socket> socket);
+  ~StreamSession(); 
   std::shared_ptr<tcp::socket> socket();
   virtual void Start() = 0;
 
@@ -19,40 +24,37 @@ protected:
   std::shared_ptr<tcp::socket> socket_;
 };
 
-class StreamPushSession : public StreamSession, public StreamPusher<int> {
+class StreamPushSession : 
+public StreamSession,
+public StreamPusher<std::shared_ptr<AVPacket>> {
 public:
-  explicit StreamPushSession(std::shared_ptr<tcp::socket> socket);
+  explicit StreamPushSession(std::shared_ptr<tcp::socket> socket, const std::string& stream_id);
   virtual ~StreamPushSession();
 
   void Start() override;
 
 private:
+  void ReadMessage();
   int data_ = 0;
 };
 
-class StreamPullSession : public StreamSession, public StreamPuller<int> {
+class StreamPullSession : public StreamSession, public StreamPuller<std::shared_ptr<AVPacket>> {
 public:
-  explicit StreamPullSession(std::shared_ptr<tcp::socket> socket);
+  explicit StreamPullSession(std::shared_ptr<tcp::socket> socket, const std::string& puller_id);
   virtual ~StreamPullSession();
-  void OnData(const int& data) override;
+  void OnData(const std::shared_ptr<AVPacket>& data) override;
   void Start() override;
 };
 
-class StreamingServer {
+class StreamingServer : public StreamPushListener {
 public:
   StreamingServer(boost::asio::io_context& io_context, short stream_port);
   ~StreamingServer();
   void StartAccept();
-
+  void OnPushStreamComplete(const std::string& stream_id) override;
+  
 private:
   void HandleNewConnection(std::shared_ptr<tcp::socket> socket);
-
-  void HandleAcceptPush(std::shared_ptr<StreamPushSession> session,
-                        const boost::system::error_code& error);
-  void HandleAcceptPull(std::shared_ptr<StreamPullSession> session,
-                        const boost::system::error_code& error);
-  void StartStreamingSession(const std::string& stream_id, bool is_push);
-  void StopStreamingSession(const std::string& stream_id);
 
   boost::asio::io_context& io_context_;
   tcp::acceptor acceptor_;
