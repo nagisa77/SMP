@@ -173,7 +173,7 @@ void StreamPushSession::ReadMessage() {
         receive_packet_async(socket_, packet_size, [=](std::shared_ptr<AVPacket> packet, const boost::system::error_code&, std::size_t) {
           // 转发帧
           NotifyPuller(packet);
-          spdlog::debug("notify pullers, num of puller: {}", pullers_.size());
+          spdlog::info("notify pullers, num of puller: {}", pullers_.size());
           ReadMessage();
         });
       } else if (message_type == MessageType::kTypeStreamInfo) {
@@ -203,10 +203,9 @@ void StreamingServer::OnPushStreamComplete(const std::string& stream_id) {
 
 void StreamingServer::HandleNewConnection(std::shared_ptr<tcp::socket> socket) {
   receive_json_async(socket, [=](const JSON& json, const boost::system::error_code& ec, std::size_t) {
-    if (ec) { // Check if there is an error
+    if (ec) {
       spdlog::error("Error: {} - {}", ec.value(), ec.message()); // Log the error information
     } else {
-//      spdlog::debug("read json: {}", json.dump());
       int message_type = json["type"];
       
       if (message_type != MessageType::kTypeStreamInfo) {
@@ -247,19 +246,14 @@ void StreamingServer::HandleNewConnection(std::shared_ptr<tcp::socket> socket) {
 }
 
 void StreamingServer::StartAccept() {
-  // 创建一个新的 socket
   std::shared_ptr<tcp::socket> socket = std::make_shared<tcp::socket>(acceptor_.get_executor());
-  // 异步等待新的连接
   acceptor_.async_accept(
       *socket, [this, socket](const boost::system::error_code& error) {
         if (!error) {
-          // 成功接受新的连接
           HandleNewConnection(socket);
 
-          // 再次开始等待接受下一个连接
           StartAccept();
         } else {
-          // 处理错误
         }
       });
 }

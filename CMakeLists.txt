@@ -6,6 +6,7 @@ set(CMAKE_CXX_STANDARD 14)
 find_package(spdlog REQUIRED)
 find_package(nlohmann_json REQUIRED)
 find_package(Boost REQUIRED COMPONENTS system thread)
+find_package(Qt6 COMPONENTS Core Widgets REQUIRED)
 
 find_path(FFMPEG_INCLUDE_DIR libavformat/avformat.h)
 find_library(AVFORMAT_LIBRARY avformat)
@@ -38,6 +39,8 @@ target_link_libraries(TestClientPull
   spdlog::spdlog
   Boost::system
   Boost::thread
+  Qt6::Core
+  Qt6::Widgets
   nlohmann_json::nlohmann_json
   ${AVFORMAT_LIBRARY}
   ${AVCODEC_LIBRARY}
