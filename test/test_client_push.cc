@@ -68,7 +68,7 @@ static void send_packet(tcp::socket& socket, const AVPacket* pkt) {
 }
 
 int main() {
-  spdlog::info("Starting client...");
+  spdlog::info("Starting Pusher client...");
 
   try {
     boost::asio::io_context io_context;

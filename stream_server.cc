@@ -137,11 +137,12 @@ void StreamPullSession::OnData(const std::shared_ptr<AVPacket>& data) {
     if (ec) {
       spdlog::error("Error: {} - {}", ec.value(), ec.message()); // Log the error information
       // remove self from pusher
+      pusher_->UnregisterPuller(shared_from_this());
     } else {
       send_packet_async(socket_, data, [=](const boost::system::error_code& ec, std::size_t) {
         if (ec) {
           spdlog::error("Error: {} - {}", ec.value(), ec.message()); // Log the error information
-          // remove self from pusher
+          pusher_->UnregisterPuller(shared_from_this());
         } else {
           spdlog::info("pull session write packet success");
         }
@@ -171,10 +172,8 @@ void StreamPushSession::ReadMessage() {
         int packet_size = json["packet_size"];
         receive_packet_async(socket_, packet_size, [=](std::shared_ptr<AVPacket> packet, const boost::system::error_code&, std::size_t) {
           // 转发帧
-          for (auto&& puller : pullers_) {
-            puller->OnData(packet);
-          }
-          
+          NotifyPuller(packet);
+          spdlog::debug("notify pullers, num of puller: {}", pullers_.size());
           ReadMessage();
         });
       } else if (message_type == MessageType::kTypeStreamInfo) {
@@ -240,6 +239,7 @@ void StreamingServer::HandleNewConnection(std::shared_ptr<tcp::socket> socket) {
           std::shared_ptr<StreamPullSession> pull_session = std::make_shared<StreamPullSession>(socket);
           pull_session->Start();
           push_sessions_[stream_id]->RegisterPuller(pull_session);
+          pull_session->pusher_ = push_sessions_[stream_id];
         }
       }
     }

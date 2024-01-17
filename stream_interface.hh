@@ -5,17 +5,19 @@
 #include <set>
 #include <string>
 
+template <typename T> class StreamPusher;
 class StreamPushListener {
 public:
   virtual void OnPushStreamComplete(const std::string& stream_id) = 0;
 };
 
-template <typename T> class StreamPuller {
+template <typename T> class StreamPuller : public std::enable_shared_from_this<StreamPuller<T>> {
 public:
   virtual void OnData(const T& data) = 0;
+  std::shared_ptr<StreamPusher<T>> pusher_;
 };
 
-template <typename T> class StreamPusher {
+template <typename T> class StreamPusher : public std::enable_shared_from_this<StreamPusher<T>> {
 public:
   void RegisterPuller(std::shared_ptr<StreamPuller<T>> puller) {
     pullers_.insert(puller);

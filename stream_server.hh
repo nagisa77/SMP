@@ -13,7 +13,7 @@ extern "C" {
 
 using boost::asio::ip::tcp;
 
-class StreamSession : public std::enable_shared_from_this<StreamSession> {
+class StreamSession {
 public:
   explicit StreamSession(std::shared_ptr<tcp::socket> socket);
   ~StreamSession(); 
