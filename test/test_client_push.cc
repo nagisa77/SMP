@@ -3,6 +3,7 @@
 #include <iostream>
 #include <spdlog/spdlog.h>
 #include <nlohmann/json.hpp>
+#include <base64.hh>
 extern "C" {
 #include <libavformat/avformat.h>
 #include <libavutil/time.h>
@@ -16,6 +17,38 @@ struct AVFrameDeleter {
     }
   }
 };
+
+void logAVPacket(const AVPacket* pkt) {
+    std::stringstream ss;
+    
+    ss << "AVPacket: ";
+    ss << "pts = " << pkt->pts << ", ";
+    ss << "dts = " << pkt->dts << ", ";
+    ss << "size = " << pkt->size << ", ";
+    ss << "stream_index = " << pkt->stream_index << ", ";
+    ss << "flags = " << pkt->flags << ", ";
+    ss << "side_data_elems = " << pkt->side_data_elems << ", ";
+    ss << "duration = " << pkt->duration << ", ";
+    ss << "pos = " << pkt->pos << ", ";
+
+    // 打印 data 字段的前几个字节
+    ss << "data (first few bytes) = ";
+    const int dataBytesToPrint = 10;
+    for (int i = 0; i < std::min(pkt->size, dataBytesToPrint); ++i) {
+        ss << std::setfill('0') << std::setw(2) << std::hex << (int)pkt->data[i] << " ";
+    }
+
+    // 打印 side_data 字段的前几个字节（如果存在）
+    if (pkt->side_data_elems > 0 && pkt->side_data != nullptr) {
+        ss << ", side_data (first few bytes) = ";
+        const int sideDataBytesToPrint = 10;
+        for (int i = 0; i < std::min((int)pkt->side_data->size, sideDataBytesToPrint); ++i) {
+            ss << std::setfill('0') << std::setw(2) << std::hex << (int)pkt->side_data->data[i] << " ";
+        }
+    }
+
+    spdlog::info(ss.str());
+}
 
 using AVFramePtr = std::shared_ptr<AVFrame>;
 
@@ -55,13 +88,35 @@ static void send_packet(tcp::socket& socket, const AVPacket* pkt) {
   auto packet_size = std::make_shared<std::uint32_t>(pkt->size);
   
   JSON json;
+//  json["packet_size"] = *packet_size + 4;
   json["packet_size"] = *packet_size;
   json["type"] = MessageType::kTypePacket;
+  json["pts"] = pkt->pts;
+  json["dts"] = pkt->dts;
+  json["stream_index"] = pkt->stream_index;
+  json["duration"] = pkt->duration;
+  json["pos"] = pkt->pos;
   
   send_json(socket, json);
   
-  auto packet_data = std::make_shared<std::vector<char>>(pkt->data, pkt->data + pkt->size);
+  logAVPacket(pkt);
+  
+  // 为新数据分配空间（考虑额外的空间用于 NAL 单元起始码）
+//  size_t new_size = pkt->size + 4; // 加上 4 字节的起始码
+//  auto packet_data = std::make_shared<std::vector<char>>(new_size);
+  
+  auto packet_data = std::make_shared<std::vector<char>>(*packet_size);
 
+  // 添加 NAL 单元起始码
+//  (*packet_data)[0] = 0x00;
+//  (*packet_data)[1] = 0x00;
+//  (*packet_data)[2] = 0x00;
+//  (*packet_data)[3] = 0x01;
+
+  // 复制原始数据
+  std::copy(pkt->data, pkt->data + pkt->size, packet_data->begin());
+
+  // 发送数据
   std::vector<boost::asio::const_buffer> buffers;
   buffers.push_back(boost::asio::buffer(*packet_data));
 
@@ -87,7 +142,7 @@ int main() {
     
     spdlog::info("start Codec");
 
-    std::string file_path = "/Users/chenjiating/Downloads/output.mp4";
+    std::string file_path = "/Users/jt/Downloads/output.mp4";
     
     const char* video_path = file_path.c_str();
     AVFormatContext* pFormatCtx = NULL;
@@ -121,11 +176,6 @@ int main() {
         pFormatCtx->streams[video_stream_index]->codecpar->codec_id);
     AVCodecContext* pCodecCtx = avcodec_alloc_context3(codec);
     
-    JSON codec_info;
-    start_push["type"] = MessageType::kTypeCodecInfo;
-    start_push["codec_id"] = pCodecCtx->codec_id;
-    send_json(socket, start_push);
-    
     avcodec_parameters_to_context(
         pCodecCtx, pFormatCtx->streams[video_stream_index]->codecpar);
 
@@ -133,6 +183,17 @@ int main() {
       fprintf(stderr, "Could not open codec\n");
       return 1;
     }
+    
+    JSON codec_info;
+    start_push["type"] = MessageType::kTypeCodecInfo;
+    start_push["codec_id"] = pCodecCtx->codec_id;
+    start_push["width"] = pCodecCtx->width;
+    start_push["height"] = pCodecCtx->height;
+    start_push["pix_fmt"] = pCodecCtx->pix_fmt;
+    start_push["extradata_size"] = pCodecCtx->extradata_size;
+    start_push["extradata"] = base64_encode(pCodecCtx->extradata, pCodecCtx->extradata_size);
+    send_json(socket, start_push);
+    
     AVPacket pkt;
     auto frame = createAVFramePtr();
     uint64_t idx = 0;

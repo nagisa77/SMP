@@ -16,6 +16,11 @@ using boost::asio::ip::tcp;
 
 struct CodecInfo {
   AVCodecID codec_id_;
+  int width;
+  int height;
+  int pix_fmt;
+  int extradata_size;
+  std::string extradata_base64; 
 };
 
 enum StreamDataType {
@@ -66,7 +71,7 @@ public:
   bool HasReceiveCodecInfo();
   
 private:
-  void PopStreamData(StreamData& stream_data);
+  void PopStreamData(std::shared_ptr<StreamData> stream_data);
   bool has_receive_codec_info_ = false;
 };
 

@@ -1,6 +1,7 @@
 
 #include "test_client_pull.hh"
 #include <QApplication>
+#include <base64.hh>
 
 static SwsContext* sws_ctx = nullptr;
 
@@ -48,11 +49,11 @@ static QImage convertToQImage(AVFramePtr frame) {
   return img;
 }
 
-VideoPlayerView::VideoPlayerView() : QWidget(nullptr) {
+VideoPlayerView::VideoPlayerView() : QWidget(nullptr), fq_(100) {
   spdlog::info("VideoPlayerView");
 
-//  connect(this, &VideoPlayerView::frameReady, this,
-//          &VideoPlayerView::renderFrame);
+  connect(this, &VideoPlayerView::frameReady, this,
+          &VideoPlayerView::renderFrame);
 }
 
 VideoPlayerView::~VideoPlayerView() {
@@ -61,8 +62,7 @@ VideoPlayerView::~VideoPlayerView() {
 
 void VideoPlayerView::OnVideoFrame(AVFramePtr frame) {
   QImage image = convertToQImage(frame);
-  renderFrame(image);
-//  emit frameReady(image);
+  emit frameReady(image);
 }
 
 void VideoPlayerView::OnMediaError() {
@@ -122,8 +122,6 @@ static std::shared_ptr<AVPacket> receive_packet(tcp::socket& socket) {
   int type = json["type"]; 
   int size = json["packet_size"];
   
-  spdlog::info("receive json: {}", json.dump());
-  
   char* packet_data = (char*) malloc(size * sizeof(char)); // leak
   boost::asio::read(socket, boost::asio::buffer(packet_data, size));
   static auto av_packet_deleter = [](AVPacket* pkt) {
@@ -131,12 +129,48 @@ static std::shared_ptr<AVPacket> receive_packet(tcp::socket& socket) {
   };
   std::shared_ptr<AVPacket> packet(av_packet_alloc(), av_packet_deleter);
   av_packet_from_data(packet.get(), (uint8_t*)packet_data, size);
+  
+  packet->pts = json["pts"];
+  packet->dts = json["dts"];
+  packet->stream_index = json["stream_index"];
+  packet->duration = json["duration"];
+  packet->pos = json["pos"]; 
+  
   return packet;
 }
 
-int main(int argc, char** argv) {
-  spdlog::info("Starting Puller client...");
+void logAVPacket(const AVPacket* pkt) {
+    std::stringstream ss;
+    
+    ss << "AVPacket: ";
+    ss << "pts = " << pkt->pts << ", ";
+    ss << "dts = " << pkt->dts << ", ";
+    ss << "size = " << pkt->size << ", ";
+    ss << "stream_index = " << pkt->stream_index << ", ";
+    ss << "flags = " << pkt->flags << ", ";
+    ss << "side_data_elems = " << pkt->side_data_elems << ", ";
+    ss << "duration = " << pkt->duration << ", ";
+    ss << "pos = " << pkt->pos << ", ";
 
+    // 打印 data 字段的前几个字节
+    ss << "data (first few bytes) = ";
+    const int dataBytesToPrint = 10;
+    for (int i = 0; i < std::min(pkt->size, dataBytesToPrint); ++i) {
+        ss << std::setfill('0') << std::setw(2) << std::hex << (int)pkt->data[i] << " ";
+    }
+
+    // 打印 side_data 字段的前几个字节（如果存在）
+    if (pkt->side_data_elems > 0 && pkt->side_data != nullptr) {
+        ss << ", side_data (first few bytes) = ";
+        const int sideDataBytesToPrint = 10;
+        for (int i = 0; i < std::min((int)pkt->side_data->size, sideDataBytesToPrint); ++i) {
+            ss << std::setfill('0') << std::setw(2) << std::hex << (int)pkt->side_data->data[i] << " ";
+        }
+    }
+
+    spdlog::info(ss.str());
+}
+int ReceiveFrameFromInternet(VideoPlayerView& v) {
   try {
     boost::asio::io_context io_context;
     tcp::socket socket(io_context);
@@ -161,6 +195,10 @@ int main(int argc, char** argv) {
     
     AVCodecID codec_id = codec_info["codec_id"];
     
+    int width = codec_info["width"];
+    int height = codec_info["height"];
+    int pix_fmt = codec_info["pix_fmt"];
+    
     const AVCodec *codec = avcodec_find_decoder(codec_id);
     if (!codec) {
       spdlog::error("Codec not found");
@@ -168,27 +206,34 @@ int main(int argc, char** argv) {
     }
 
     AVCodecContext *codec_ctx = avcodec_alloc_context3(codec);
+    
+    codec_ctx->width = width;
+    codec_ctx->height = height;
+    codec_ctx->pix_fmt = (AVPixelFormat)pix_fmt;
+    codec_ctx->extradata_size = codec_info["extradata_size"];
+    
+    auto data = base64_decode(codec_info["extradata"]);
+    codec_ctx->extradata = data.data();
+    
     if (!codec_ctx) {
       spdlog::error("Could not allocate video codec context");
       return 1;
     }
     
-    
-    int q_argc = argc;
-    char** q_argv = (char**)argv;
-    QApplication app(q_argc, q_argv);
-
-    VideoPlayerView video_player;
-    video_player.show();
-
-    app.exec();
+    if (avcodec_open2(codec_ctx, codec, NULL) < 0) {
+      spdlog::error("Could not open codec");
+      return 1;
+    }
     
     auto frame = createAVFramePtr();
 
     while (true) {
       std::shared_ptr<AVPacket> paket = receive_packet(socket);
+      int send_res = avcodec_send_packet(codec_ctx, paket.get());
       
-      if (avcodec_send_packet(codec_ctx, paket.get()) == 0) {
+      logAVPacket(paket.get());
+      
+      if (send_res == 0) {
         int ret = avcodec_receive_frame(codec_ctx, frame.get());
 
         if (ret == 0) {
@@ -198,16 +243,32 @@ int main(int argc, char** argv) {
             continue;
           }
           
-          video_player.OnVideoFrame(frame);
+          v.OnVideoFrame(frame);
         }
       }
     }
-    
-    
   } catch (std::exception& e) {
     spdlog::error("Exception: {}", e.what());
     return 1;
   }
+}
+
+int main(int argc, char** argv) {
+  spdlog::info("Starting Puller client...");
+
+  
+  int q_argc = argc;
+  char** q_argv = (char**)argv;
+  QApplication app(q_argc, q_argv);
+
+  VideoPlayerView video_player;
+  video_player.show();
+  
+  std::thread receiveThread(ReceiveFrameFromInternet, std::ref(video_player));
+
+  app.exec();
+
+  receiveThread.join();
 
   spdlog::info("Client finished successfully.");
   return 0;

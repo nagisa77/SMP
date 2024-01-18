@@ -17,6 +17,15 @@ enum MessageType {
   kTypeCodecInfo = 2, 
 };
 
+struct PacketInfo {
+  int64_t pts;
+  int64_t dts;
+  int stream_index;
+  int size;
+  int duration;
+  int pos;
+};
+
 using WriteJSONComplete = std::function<void(const boost::system::error_code&, std::size_t)>;
 using ReadJSONComplete = std::function<void(const JSON& json, const boost::system::error_code&, std::size_t)>;
 using ReadAVPacketComplete = std::function<void(std::shared_ptr<AVPacket> packet, const boost::system::error_code&, std::size_t)>;
@@ -85,22 +94,65 @@ static void receive_json_async(std::shared_ptr<tcp::socket> socket, ReadJSONComp
     });
 }
 
-static void receive_packet_async(std::shared_ptr<tcp::socket> socket, int size, ReadAVPacketComplete callback) {
-  char* packet_data = (char*) malloc(size * sizeof(char)); // leak
+void logAVPacket(const AVPacket* pkt) {
+    std::stringstream ss;
+    
+    ss << "AVPacket: ";
+    ss << "pts = " << pkt->pts << ", ";
+    ss << "dts = " << pkt->dts << ", ";
+    ss << "size = " << pkt->size << ", ";
+    ss << "stream_index = " << pkt->stream_index << ", ";
+    ss << "flags = " << pkt->flags << ", ";
+    ss << "side_data_elems = " << pkt->side_data_elems << ", ";
+    ss << "duration = " << pkt->duration << ", ";
+    ss << "pos = " << pkt->pos << ", ";
+
+    // 打印 data 字段的前几个字节
+    ss << "data (first few bytes) = ";
+    const int dataBytesToPrint = 10;
+    for (int i = 0; i < std::min(pkt->size, dataBytesToPrint); ++i) {
+        ss << std::setfill('0') << std::setw(2) << std::hex << (int)pkt->data[i] << " ";
+    }
+
+    // 打印 side_data 字段的前几个字节（如果存在）
+    if (pkt->side_data_elems > 0 && pkt->side_data != nullptr) {
+        ss << ", side_data (first few bytes) = ";
+        const int sideDataBytesToPrint = 10;
+        for (int i = 0; i < std::min((int)pkt->side_data->size, sideDataBytesToPrint); ++i) {
+            ss << std::setfill('0') << std::setw(2) << std::hex << (int)pkt->side_data->data[i] << " ";
+        }
+    }
+
+    spdlog::info(ss.str());
+}
+
+static void receive_packet_async(std::shared_ptr<tcp::socket> socket, PacketInfo info, ReadAVPacketComplete callback) {
+  int size = info.size;
+  char* packet_data = (char*) av_malloc(size * sizeof(char)); // leak
   boost::asio::async_read(*socket, boost::asio::buffer(packet_data, size),
-  [packet_data, size, callback](const boost::system::error_code& ec, std::size_t bytes_transferred) {
+  [packet_data, size, callback, info](const boost::system::error_code& ec, std::size_t bytes_transferred) {
     static auto av_packet_deleter = [](AVPacket* pkt) {
       av_packet_free(&pkt);
     };
     std::shared_ptr<AVPacket> packet(av_packet_alloc(), av_packet_deleter);
     av_packet_from_data(packet.get(), (uint8_t*)packet_data, size);
-    callback(packet, ec, bytes_transferred);
+    packet->pts = info.pts;
+    packet->dts = info.dts;
+    packet->stream_index = info.stream_index;
+    packet->duration = info.duration;
+    packet->pos = info.pos;
     
+    spdlog::info("receive_packet_async");
+    logAVPacket(packet.get());
+
+    callback(packet, ec, bytes_transferred);
     spdlog::debug("read a AVPacket.");
   });
 }
 
 static void send_packet_async(std::shared_ptr<tcp::socket> socket, const std::shared_ptr<AVPacket>& pkt, WriteAVPacketComplete callback) {
+  spdlog::info("send_packet_async");
+  logAVPacket(pkt.get());
   auto data = std::make_shared<std::vector<char>>(pkt->data, pkt->data + pkt->size);
 
   std::vector<boost::asio::const_buffer> buffers;
@@ -132,26 +184,31 @@ bool StreamPullSession::HasReceiveCodecInfo() {
   return has_receive_codec_info_;
 }
 
-void StreamPullSession::PopStreamData(StreamData& stream_data) {
-  if (stream_data.data_send_stack_.empty()) {
+void StreamPullSession::PopStreamData(std::shared_ptr<StreamData> stream_data) {
+  if (stream_data->data_send_stack_.empty()) {
     return;
   }
-  StreamDataType type = stream_data.data_send_stack_.back();
-  stream_data.data_send_stack_.pop_back();
+  StreamDataType type = stream_data->data_send_stack_.back();
+  stream_data->data_send_stack_.pop_back();
   if (type == StreamDataType::kStreamDataTypePacket) {
-    std::shared_ptr<AVPacket> data = stream_data.packet_;
+    std::shared_ptr<AVPacket> data = stream_data->packet_;
     JSON json;
     json["type"] = MessageType::kTypePacket;
     json["packet_size"] = data->size;
+    json["pts"] = data->pts;
+    json["dts"] = data->dts;
+    json["stream_index"] = data->stream_index;
+    json["duration"] = data->duration;
+    json["pos"] = data->pos;
     
     spdlog::info("pull session write json: {}", json.dump());
-    send_json_async(socket_, json, [=, &stream_data](const boost::system::error_code& ec, std::size_t sz) {
+    send_json_async(socket_, json, [=](const boost::system::error_code& ec, std::size_t sz) {
       if (ec) {
         spdlog::error("Error: {} - {}", ec.value(), ec.message()); // Log the error information
         // remove self from pusher
         pusher_->UnregisterPuller(shared_from_this());
       } else {
-        send_packet_async(socket_, data, [=, &stream_data](const boost::system::error_code& ec, std::size_t) {
+        send_packet_async(socket_, data, [=](const boost::system::error_code& ec, std::size_t) {
           if (ec) {
             spdlog::error("Error: {} - {}", ec.value(), ec.message()); // Log the error information
             pusher_->UnregisterPuller(shared_from_this());
@@ -165,13 +222,18 @@ void StreamPullSession::PopStreamData(StreamData& stream_data) {
   } else if (type == StreamDataType::kStreamDataTypeCodecInfo) {
     has_receive_codec_info_ = true;
     
-    std::shared_ptr<CodecInfo> info = stream_data.codec_info_;
+    std::shared_ptr<CodecInfo> info = stream_data->codec_info_;
     JSON json;
 
     json["type"] = MessageType::kTypeCodecInfo;
-    json["codec_id"] = stream_data.codec_info_->codec_id_;
-    
-    send_json_async(socket_, json, [=, &stream_data](const boost::system::error_code& ec, std::size_t sz) {
+    json["codec_id"] = stream_data->codec_info_->codec_id_;
+    json["width"] = stream_data->codec_info_->width;
+    json["height"] = stream_data->codec_info_->height;
+    json["pix_fmt"] = stream_data->codec_info_->pix_fmt;
+    json["extradata_size"] = stream_data->codec_info_->extradata_size;
+    json["extradata"] = stream_data->codec_info_->extradata_base64;
+     
+    send_json_async(socket_, json, [=](const boost::system::error_code& ec, std::size_t sz) {
       if (ec) {
         spdlog::error("Error: {} - {}", ec.value(), ec.message()); // Log the error information
         // remove self from pusher
@@ -184,7 +246,7 @@ void StreamPullSession::PopStreamData(StreamData& stream_data) {
 }
 
 void StreamPullSession::OnData(const StreamData& stream_data) {
-  auto data_to_pop = stream_data;
+  std::shared_ptr<StreamData> data_to_pop = std::make_shared<StreamData>(stream_data);
   PopStreamData(data_to_pop);
 }
 
@@ -223,8 +285,14 @@ void StreamPushSession::ReadMessage() {
       spdlog::debug("read json: {}", json.dump());
       int message_type = json["type"];
       if (message_type == MessageType::kTypePacket) {
-        int packet_size = json["packet_size"];
-        receive_packet_async(socket_, packet_size, [=](std::shared_ptr<AVPacket> packet, const boost::system::error_code&, std::size_t) {
+        PacketInfo info;
+        info.size = json["packet_size"];
+        info.pts = json["pts"];
+        info.dts = json["dts"];
+        info.stream_index = json["stream_index"];
+        info.duration = json["duration"];
+        info.pos = json["pos"];
+        receive_packet_async(socket_, info, [=](std::shared_ptr<AVPacket> packet, const boost::system::error_code&, std::size_t) {
           StreamData stream_data;
           stream_data.data_send_stack_ = { StreamDataType::kStreamDataTypePacket };
           stream_data.packet_ = packet;
@@ -245,6 +313,12 @@ void StreamPushSession::ReadMessage() {
           codec_info_ = std::make_shared<CodecInfo>();
         }
         codec_info_->codec_id_ = json["codec_id"];
+        codec_info_->width = json["width"];
+        codec_info_->height = json["height"];
+        codec_info_->pix_fmt = json["pix_fmt"];
+        codec_info_->extradata_size = json["extradata_size"];
+        codec_info_->extradata_base64 = json["extradata"];
+
         // notify puller codec info update
         ReadMessage();
       }

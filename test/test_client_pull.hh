@@ -1,6 +1,7 @@
 #ifndef VIDEO_VIEW_HH
 #define VIDEO_VIEW_HH
 
+#include "blocking_queue.h"
 #include <boost/asio.hpp>
 #include <iostream>
 #include <spdlog/spdlog.h>
@@ -18,6 +19,7 @@ extern "C" {
 #include <QWidget>
 #include <QPainter>
 #include <QKeyEvent>
+#include <QImage>
 
 struct AVFrameDeleter {
   void operator()(AVFrame* frame) const {
@@ -53,10 +55,11 @@ class VideoPlayerView : public QWidget, public VideoCodecListener {
   void renderFrame(QImage frame);
   void paintEvent(QPaintEvent* event) override;
 
-// signals:
-//  void frameReady(QImage frame);
   void OnVideoFrame(AVFramePtr frame) override;
-
+  
+ signals:
+  void frameReady(QImage frame);
+  
  private:
   void OnMediaError() override;
   void keyPressEvent(QKeyEvent *event) override;
@@ -64,6 +67,7 @@ class VideoPlayerView : public QWidget, public VideoCodecListener {
  private:
   QImage current_frame_;
   bool pause_ = false;
+  BlockingQueue<AVFramePtr> fq_;
 };
 
 #endif
