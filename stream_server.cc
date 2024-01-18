@@ -123,7 +123,7 @@ void logAVPacket(const AVPacket* pkt) {
         }
     }
 
-    spdlog::info(ss.str());
+    spdlog::debug(ss.str());
 }
 
 static void receive_packet_async(std::shared_ptr<tcp::socket> socket, PacketInfo info, ReadAVPacketComplete callback) {
@@ -142,7 +142,7 @@ static void receive_packet_async(std::shared_ptr<tcp::socket> socket, PacketInfo
     packet->duration = info.duration;
     packet->pos = info.pos;
     
-    spdlog::info("receive_packet_async");
+    spdlog::debug("receive_packet_async");
     logAVPacket(packet.get());
 
     callback(packet, ec, bytes_transferred);
@@ -151,7 +151,7 @@ static void receive_packet_async(std::shared_ptr<tcp::socket> socket, PacketInfo
 }
 
 static void send_packet_async(std::shared_ptr<tcp::socket> socket, const std::shared_ptr<AVPacket>& pkt, WriteAVPacketComplete callback) {
-  spdlog::info("send_packet_async");
+  spdlog::debug("send_packet_async");
   logAVPacket(pkt.get());
   auto data = std::make_shared<std::vector<char>>(pkt->data, pkt->data + pkt->size);
 
@@ -220,6 +220,10 @@ void StreamPullSession::PopStreamData(std::shared_ptr<StreamData> stream_data) {
       }
     });
   } else if (type == StreamDataType::kStreamDataTypeCodecInfo) {
+    if (has_receive_codec_info_) {
+      PopStreamData(stream_data);
+      return;
+    }
     has_receive_codec_info_ = true;
     
     std::shared_ptr<CodecInfo> info = stream_data->codec_info_;
