@@ -25,7 +25,7 @@ public:
   void UnregisterPuller(std::shared_ptr<StreamPuller<T>> puller) {
     pullers_.erase(puller);
   }
-  void NotifyPuller(const T& data) {
+  virtual void NotifyPuller(const T& data) {
     for (auto puller : pullers_) {
       puller->OnData(data);
     }

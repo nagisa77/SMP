@@ -1,70 +1,6 @@
-#include <boost/asio.hpp>
-#include <httplib.h>
-#include <iostream>
-#include <spdlog/spdlog.h>
-#include <nlohmann/json.hpp>
-extern "C" {
-#include <libavformat/avformat.h>
-#include <libavutil/time.h>
-#include <libavcodec/avcodec.h>
-}
-extern "C" {
-#include <libavutil/avutil.h>
-#include <libavutil/imgutils.h>
-#include <libswresample/swresample.h>
-#include <libswscale/swscale.h>
-#include <libavutil/opt.h>
-}
-#include <QWidget>
-#include <QPainter>
-#include <QKeyEvent>
 
-struct AVFrameDeleter {
-  void operator()(AVFrame* frame) const {
-    if (frame) {
-      av_frame_free(&frame);
-    }
-  }
-};
-
-using AVFramePtr = std::shared_ptr<AVFrame>;
-
-inline AVFramePtr createAVFramePtr() {
-    return AVFramePtr(av_frame_alloc(), AVFrameDeleter());
-}
-
-class VideoCodecListener {
- public:
-  virtual void OnVideoFrame(AVFramePtr frame) = 0;
-  virtual void OnMediaError() = 0;
-};
-
-
-class VideoPlayerView : public QWidget, public VideoCodecListener {
-  using super_class = QWidget;
-  using this_class = VideoPlayerView;
-
-  Q_OBJECT
-
- public:
-  VideoPlayerView();
-  ~VideoPlayerView();
-
-  void renderFrame(QImage frame);
-  void paintEvent(QPaintEvent* event) override;
-
- signals:
-  void frameReady(QImage frame);
-
- private:
-  void OnVideoFrame(AVFramePtr frame) override;
-  void OnMediaError() override;
-  void keyPressEvent(QKeyEvent *event) override;
-
- private:
-  QImage current_frame_;
-  bool pause_ = false;
-};
+#include "test_client_pull.hh"
+#include <QApplication>
 
 static SwsContext* sws_ctx = nullptr;
 
@@ -115,8 +51,8 @@ static QImage convertToQImage(AVFramePtr frame) {
 VideoPlayerView::VideoPlayerView() : QWidget(nullptr) {
   spdlog::info("VideoPlayerView");
 
-  connect(this, &VideoPlayerView::frameReady, this,
-          &VideoPlayerView::renderFrame);
+//  connect(this, &VideoPlayerView::frameReady, this,
+//          &VideoPlayerView::renderFrame);
 }
 
 VideoPlayerView::~VideoPlayerView() {
@@ -125,7 +61,8 @@ VideoPlayerView::~VideoPlayerView() {
 
 void VideoPlayerView::OnVideoFrame(AVFramePtr frame) {
   QImage image = convertToQImage(frame);
-  emit frameReady(image);
+  renderFrame(image);
+//  emit frameReady(image);
 }
 
 void VideoPlayerView::OnMediaError() {
@@ -156,6 +93,7 @@ using boost::asio::ip::tcp;
 enum MessageType {
   kTypeStreamInfo = 0,
   kTypePacket = 1,
+  kTypeCodecInfo = 2,
 };
 
 static void send_json(tcp::socket& socket, const JSON& json) {
@@ -174,6 +112,7 @@ static void receive_json(tcp::socket& socket, JSON& json) {
   std::vector<char> json_str(json_length);
   boost::asio::read(socket, boost::asio::buffer(json_str.data(), json_length));
   json = JSON::parse(json_str.begin(), json_str.end());
+  spdlog::info("receive json: {}", json.dump());
 }
 
 static std::shared_ptr<AVPacket> receive_packet(tcp::socket& socket) {
@@ -195,7 +134,7 @@ static std::shared_ptr<AVPacket> receive_packet(tcp::socket& socket) {
   return packet;
 }
 
-int main() {
+int main(int argc, char** argv) {
   spdlog::info("Starting Puller client...");
 
   try {
@@ -212,13 +151,45 @@ int main() {
     start_pull["enable"] = true;
     send_json(socket, start_pull);
     
-    VideoPlayerView view;
+    JSON codec_info;
+    receive_json(socket, codec_info);
     
+    if (codec_info["type"] != MessageType::kTypeCodecInfo) {
+      spdlog::error("does not receive codec info");
+      return 1;
+    }
+    
+    AVCodecID codec_id = codec_info["codec_id"];
+    
+    const AVCodec *codec = avcodec_find_decoder(codec_id);
+    if (!codec) {
+      spdlog::error("Codec not found");
+      return 1;
+    }
+
+    AVCodecContext *codec_ctx = avcodec_alloc_context3(codec);
+    if (!codec_ctx) {
+      spdlog::error("Could not allocate video codec context");
+      return 1;
+    }
+    
+    
+    int q_argc = argc;
+    char** q_argv = (char**)argv;
+    QApplication app(q_argc, q_argv);
+
+    VideoPlayerView video_player;
+    video_player.show();
+
+    app.exec();
+    
+    auto frame = createAVFramePtr();
+
     while (true) {
       std::shared_ptr<AVPacket> paket = receive_packet(socket);
       
-      if (avcodec_send_packet(pCodecCtx, paket.get()) == 0) {
-        int ret = avcodec_receive_frame(pCodecCtx, frame.get());
+      if (avcodec_send_packet(codec_ctx, paket.get()) == 0) {
+        int ret = avcodec_receive_frame(codec_ctx, frame.get());
 
         if (ret == 0) {
           int width = frame->width;
@@ -227,11 +198,11 @@ int main() {
             continue;
           }
           
-          view.OnVideoFrame(frame);
+          video_player.OnVideoFrame(frame);
         }
       }
-      
     }
+    
     
   } catch (std::exception& e) {
     spdlog::error("Exception: {}", e.what());
@@ -241,3 +212,4 @@ int main() {
   spdlog::info("Client finished successfully.");
   return 0;
 }
+

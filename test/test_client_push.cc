@@ -48,6 +48,7 @@ static void receive_json(tcp::socket& socket, JSON& json) {
 enum MessageType {
   kTypeStreamInfo = 0,
   kTypePacket = 1,
+  kTypeCodecInfo = 2,
 };
 
 static void send_packet(tcp::socket& socket, const AVPacket* pkt) {
@@ -86,7 +87,7 @@ int main() {
     
     spdlog::info("start Codec");
 
-    std::string file_path = "/Users/jt/Downloads/output.mp4";
+    std::string file_path = "/Users/chenjiating/Downloads/output.mp4";
     
     const char* video_path = file_path.c_str();
     AVFormatContext* pFormatCtx = NULL;
@@ -119,6 +120,12 @@ int main() {
     const AVCodec* codec = avcodec_find_decoder(
         pFormatCtx->streams[video_stream_index]->codecpar->codec_id);
     AVCodecContext* pCodecCtx = avcodec_alloc_context3(codec);
+    
+    JSON codec_info;
+    start_push["type"] = MessageType::kTypeCodecInfo;
+    start_push["codec_id"] = pCodecCtx->codec_id;
+    send_json(socket, start_push);
+    
     avcodec_parameters_to_context(
         pCodecCtx, pFormatCtx->streams[video_stream_index]->codecpar);
 

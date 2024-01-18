@@ -1,6 +1,6 @@
 cmake_minimum_required(VERSION 3.10)
 project(SMP)
-
+cmake_policy(SET CMP0100 NEW)
 set(CMAKE_CXX_STANDARD 14)
 
 find_package(spdlog REQUIRED)
@@ -34,7 +34,11 @@ target_link_libraries(SMP
 )
 
 # 添加测试可执行文件
-add_executable(TestClientPull test/test_client_pull.cc)
+add_executable(TestClientPull 
+  test/test_client_pull.cc
+  test/test_client_pull.hh
+)
+set_target_properties(TestClientPull PROPERTIES AUTOMOC ON)
 target_link_libraries(TestClientPull
   spdlog::spdlog
   Boost::system

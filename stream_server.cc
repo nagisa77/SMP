@@ -14,6 +14,7 @@ using JSON = nlohmann::json;
 enum MessageType {
   kTypeStreamInfo = 0,
   kTypePacket = 1,
+  kTypeCodecInfo = 2, 
 };
 
 using WriteJSONComplete = std::function<void(const boost::system::error_code&, std::size_t)>;
@@ -127,28 +128,64 @@ std::shared_ptr<tcp::socket> StreamSession::socket() { return socket_; }
 StreamPullSession::StreamPullSession(std::shared_ptr<tcp::socket> socket)
     : StreamSession(socket) {}
 
-void StreamPullSession::OnData(const std::shared_ptr<AVPacket>& data) {
-  JSON json;
-  json["type"] = MessageType::kTypePacket;
-  json["packet_size"] = data->size;
+bool StreamPullSession::HasReceiveCodecInfo() {
+  return has_receive_codec_info_;
+}
 
-  spdlog::info("pull session write json: {}", json.dump());
-  send_json_async(socket_, json, [=](const boost::system::error_code& ec, std::size_t sz) {
-    if (ec) {
-      spdlog::error("Error: {} - {}", ec.value(), ec.message()); // Log the error information
-      // remove self from pusher
-      pusher_->UnregisterPuller(shared_from_this());
-    } else {
-      send_packet_async(socket_, data, [=](const boost::system::error_code& ec, std::size_t) {
-        if (ec) {
-          spdlog::error("Error: {} - {}", ec.value(), ec.message()); // Log the error information
-          pusher_->UnregisterPuller(shared_from_this());
-        } else {
-          spdlog::info("pull session write packet success");
-        }
-      });
-    }
-  });
+void StreamPullSession::PopStreamData(StreamData& stream_data) {
+  if (stream_data.data_send_stack_.empty()) {
+    return;
+  }
+  StreamDataType type = stream_data.data_send_stack_.back();
+  stream_data.data_send_stack_.pop_back();
+  if (type == StreamDataType::kStreamDataTypePacket) {
+    std::shared_ptr<AVPacket> data = stream_data.packet_;
+    JSON json;
+    json["type"] = MessageType::kTypePacket;
+    json["packet_size"] = data->size;
+    
+    spdlog::info("pull session write json: {}", json.dump());
+    send_json_async(socket_, json, [=, &stream_data](const boost::system::error_code& ec, std::size_t sz) {
+      if (ec) {
+        spdlog::error("Error: {} - {}", ec.value(), ec.message()); // Log the error information
+        // remove self from pusher
+        pusher_->UnregisterPuller(shared_from_this());
+      } else {
+        send_packet_async(socket_, data, [=, &stream_data](const boost::system::error_code& ec, std::size_t) {
+          if (ec) {
+            spdlog::error("Error: {} - {}", ec.value(), ec.message()); // Log the error information
+            pusher_->UnregisterPuller(shared_from_this());
+          } else {
+            spdlog::info("pull session write packet success");
+          }
+          PopStreamData(stream_data);
+        });
+      }
+    });
+  } else if (type == StreamDataType::kStreamDataTypeCodecInfo) {
+    has_receive_codec_info_ = true;
+    
+    std::shared_ptr<CodecInfo> info = stream_data.codec_info_;
+    JSON json;
+
+    json["type"] = MessageType::kTypeCodecInfo;
+    json["codec_id"] = stream_data.codec_info_->codec_id_;
+    
+    send_json_async(socket_, json, [=, &stream_data](const boost::system::error_code& ec, std::size_t sz) {
+      if (ec) {
+        spdlog::error("Error: {} - {}", ec.value(), ec.message()); // Log the error information
+        // remove self from pusher
+        pusher_->UnregisterPuller(shared_from_this());
+      } else {
+        PopStreamData(stream_data);
+      }
+    });
+  }
+}
+
+void StreamPullSession::OnData(const StreamData& stream_data) {
+  auto data_to_pop = stream_data;
+  PopStreamData(data_to_pop);
 }
 
 void StreamPullSession::Start() {}
@@ -158,6 +195,23 @@ StreamPushSession::StreamPushSession(std::shared_ptr<tcp::socket> socket, const 
 
 void StreamPushSession::Start() { 
   ReadMessage();
+}
+
+void StreamPushSession::NotifyPuller(const StreamData& data) {
+  StreamData data_to_notify = data;
+  for (auto puller : pullers_) {
+    auto pull_session = std::dynamic_pointer_cast<StreamPullSession>(puller);
+//    if (!codec_info_) {
+//      listener_->OnPushStreamComplete(stream_id_);
+//      return;
+//    }
+    
+    if (pull_session && !pull_session->HasReceiveCodecInfo()) {
+      data_to_notify.data_send_stack_.push_back(StreamDataType::kStreamDataTypeCodecInfo);
+      data_to_notify.codec_info_ = codec_info_;
+    }
+  }
+  StreamPusher<StreamData>::NotifyPuller(data_to_notify);
 }
 
 void StreamPushSession::ReadMessage() {
@@ -171,8 +225,11 @@ void StreamPushSession::ReadMessage() {
       if (message_type == MessageType::kTypePacket) {
         int packet_size = json["packet_size"];
         receive_packet_async(socket_, packet_size, [=](std::shared_ptr<AVPacket> packet, const boost::system::error_code&, std::size_t) {
+          StreamData stream_data;
+          stream_data.data_send_stack_ = { StreamDataType::kStreamDataTypePacket };
+          stream_data.packet_ = packet;
           // 转发帧
-          NotifyPuller(packet);
+          NotifyPuller(stream_data);
           spdlog::info("notify pullers, num of puller: {}", pullers_.size());
           ReadMessage();
         });
@@ -183,6 +240,13 @@ void StreamPushSession::ReadMessage() {
             listener_->OnPushStreamComplete(stream_id_);
           }
         }
+      } else if (message_type == MessageType::kTypeCodecInfo) {
+        if (!codec_info_) {
+          codec_info_ = std::make_shared<CodecInfo>();
+        }
+        codec_info_->codec_id_ = json["codec_id"];
+        // notify puller codec info update
+        ReadMessage();
       }
     }
   });
