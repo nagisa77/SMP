@@ -88,7 +88,6 @@ static void send_packet(tcp::socket& socket, const AVPacket* pkt) {
   auto packet_size = std::make_shared<std::uint32_t>(pkt->size);
   
   JSON json;
-//  json["packet_size"] = *packet_size + 4;
   json["packet_size"] = *packet_size;
   json["type"] = MessageType::kTypePacket;
   json["pts"] = pkt->pts;
