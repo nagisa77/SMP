@@ -1,6 +1,6 @@
 #include "stream_server.hh"
-#include <spdlog/spdlog.h>
 #include <memory>
+#include <spdlog/spdlog.h>
 
 std::atomic<bool> keep_running(true);
 

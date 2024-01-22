@@ -3,9 +3,9 @@
 #define STREAM_SERVER_HH
 
 #include "include/httplib.h"
-#include <stream_interface.hh>
 #include <boost/asio.hpp>
 #include <memory>
+#include <stream_interface.hh>
 #include <vector>
 
 extern "C" {
@@ -13,6 +13,21 @@ extern "C" {
 }
 
 using boost::asio::ip::tcp;
+
+enum MessageType {
+  kTypeStreamInfo = 0,
+  kTypePacket = 1,
+  kTypeCodecInfo = 2,
+};
+
+struct PacketInfo {
+  int64_t pts;
+  int64_t dts;
+  int stream_index;
+  int size;
+  int duration;
+  int pos;
+};
 
 struct CodecInfo {
   AVCodecID codec_id_;
@@ -23,13 +38,13 @@ struct CodecInfo {
   std::string extradata_base64; 
 };
 
-enum StreamDataType {
-  kStreamDataTypeCodecInfo = 0,
-  kStreamDataTypePacket = 1,
+enum PullerDataType {
+  kPullerDataTypeCodecInfo = 0,
+  kPullerDataTypePacket = 1,
 };
 
-struct StreamData {
-  std::vector<StreamDataType> data_send_stack_; 
+struct PullerData {
+  std::vector<PullerDataType> data_send_stack_; 
   std::shared_ptr<CodecInfo> codec_info_;
   std::shared_ptr<AVPacket> packet_;
 };
@@ -47,12 +62,12 @@ protected:
 
 class StreamPushSession : 
 public StreamSession,
-public StreamPusher<StreamData> {
+public StreamPusher<PullerData> {
 public:
   explicit StreamPushSession(std::shared_ptr<tcp::socket> socket, const std::string& stream_id);
 
   void Start() override;
-  void NotifyPuller(const StreamData& data) override;
+  void NotifyPuller(const PullerData& data) override;
 
 private:
   void ReadMessage();
@@ -63,15 +78,15 @@ private:
 
 class StreamPullSession : 
 public StreamSession,
-public StreamPuller<StreamData> {
+public StreamPuller<PullerData> {
 public:
   explicit StreamPullSession(std::shared_ptr<tcp::socket> socket);
-  void OnData(const StreamData& data) override;
+  void OnData(const PullerData& data) override;
   void Start() override;
   bool HasReceiveCodecInfo();
   
 private:
-  void PopStreamData(std::shared_ptr<StreamData> stream_data);
+  void PopStreamData(std::shared_ptr<PullerData> stream_data);
   bool has_receive_codec_info_ = false;
 };
 

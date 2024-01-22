@@ -3,8 +3,12 @@ project(SMP)
 cmake_policy(SET CMP0100 NEW)
 set(CMAKE_CXX_STANDARD 14)
 
-# 启用 Clang-Tidy
-set(CMAKE_CXX_CLANG_TIDY clang-tidy;-checks=*)
+# # 启用 Clang-Tidy 的特定检查
+# set(CMAKE_CXX_CLANG_TIDY 
+#     clang-tidy;
+#     -checks=-*,llvm-include-order,google-*-includes,modernize-*-includes;
+#     -header-filter=.*)
+
 
 find_package(spdlog REQUIRED)
 find_package(nlohmann_json REQUIRED)
