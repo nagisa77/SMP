@@ -3,6 +3,9 @@ project(SMP)
 cmake_policy(SET CMP0100 NEW)
 set(CMAKE_CXX_STANDARD 14)
 
+# 启用 Clang-Tidy
+set(CMAKE_CXX_CLANG_TIDY clang-tidy;-checks=*)
+
 find_package(spdlog REQUIRED)
 find_package(nlohmann_json REQUIRED)
 find_package(Boost REQUIRED COMPONENTS system thread)
@@ -19,7 +22,6 @@ add_executable(SMP
   main.cc
   stream_server.cc
   stream_server.hh
-  stream_interface.hh
 )
 
 target_link_libraries(SMP
@@ -32,6 +34,7 @@ target_link_libraries(SMP
   ${AVUTIL_LIBRARY}
   ${SWSCALE_LIBRARY}
 )
+target_include_directories(SMP PRIVATE ${CMAKE_SOURCE_DIR}/include)
 
 # 添加测试可执行文件
 add_executable(TestClientPull 

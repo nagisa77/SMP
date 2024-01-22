@@ -101,17 +101,7 @@ static void send_packet(tcp::socket& socket, const AVPacket* pkt) {
   
   logAVPacket(pkt);
   
-  // 为新数据分配空间（考虑额外的空间用于 NAL 单元起始码）
-//  size_t new_size = pkt->size + 4; // 加上 4 字节的起始码
-//  auto packet_data = std::make_shared<std::vector<char>>(new_size);
-  
   auto packet_data = std::make_shared<std::vector<char>>(*packet_size);
-
-  // 添加 NAL 单元起始码
-//  (*packet_data)[0] = 0x00;
-//  (*packet_data)[1] = 0x00;
-//  (*packet_data)[2] = 0x00;
-//  (*packet_data)[3] = 0x01;
 
   // 复制原始数据
   std::copy(pkt->data, pkt->data + pkt->size, packet_data->begin());
@@ -157,7 +147,6 @@ int main() {
     }
 
     int video_stream_index = -1;
-    //  int audio_stream_index = -1;
     for (int i = 0; i < pFormatCtx->nb_streams; ++i) {
       if (pFormatCtx->streams[i]->codecpar->codec_type == AVMEDIA_TYPE_VIDEO) {
         video_stream_index = i;

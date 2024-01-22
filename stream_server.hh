@@ -3,7 +3,7 @@
 #define STREAM_SERVER_HH
 
 #include "include/httplib.h"
-#include "stream_interface.hh"
+#include <stream_interface.hh>
 #include <boost/asio.hpp>
 #include <memory>
 #include <vector>

@@ -5,6 +5,21 @@
 #include <set>
 #include <string>
 
+enum MessageType {
+  kTypeStreamInfo = 0,
+  kTypePacket = 1,
+  kTypeCodecInfo = 2,
+};
+
+struct PacketInfo {
+  int64_t pts;
+  int64_t dts;
+  int stream_index;
+  int size;
+  int duration;
+  int pos;
+};
+
 template <typename T> class StreamPusher;
 class StreamPushListener {
 public:
