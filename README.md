@@ -29,8 +29,6 @@ On the network side, it utilizes asynchronous IO based on boost::Asio, allowing 
 
 ### Prerequisites
 
-### Prerequisites
-
 Before installing SMP, ensure that you have the following prerequisites installed:
 
 1. **CMake 3.10 or higher**: SMP requires CMake version 3.10 or newer for configuration and generating build files.
