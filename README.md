@@ -133,3 +133,8 @@ Following the JSON packet information, the `packet_size` length of binary data i
 ### The Elegance of SMP's Design
 
 The design of SMP's protocols reflects a deep understanding of the nuances of streaming media. By segregating data handling into distinct protocols, SMP provides a clear and modular approach to streaming, making it easier to manage and troubleshoot. This separation also enhances the scalability of the platform, as each component can be independently optimized or replaced as needed. Furthermore, the use of JSON for messaging not only simplifies the data exchange process but also adds a layer of readability and flexibility, accommodating future enhancements with minimal disruption.
+
+
+## Star History
+
+[![Star History Chart](https://api.star-history.com/svg?repos=nagisa77/SMP&type=Date)](https://star-history.com/#nagisa77/SMP&Date)
